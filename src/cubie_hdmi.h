@@ -17,8 +17,32 @@ typedef struct _fb_videomode {
     int flag;
 } fb_videomode, *fb_videomodeptr;
 
-typedef struct _cubie_hdmi{
-	fb_videomodeptr prefered;
-} cubie_hdmirec, *cubie_hdmiptr;
+/* -------------------------------------------------------------------- */
+/* our private data, and two functions to allocate/free this            */
 
+typedef struct {
+        unsigned char*                  fbstart;
+        unsigned char*                  fbmem;
+        int                             fboff;
+        int                             lineLength;
+        int                             rotate;
+        Bool                            shadowFB;
+        void                            *shadow;
+        CloseScreenProcPtr              CloseScreen;
+        CreateScreenResourcesProcPtr    CreateScreenResources;
+        void                            (*PointerMoved)(SCRN_ARG_TYPE arg, int x
+, int y);
+        EntityInfoPtr                   pEnt;
+        /* DGA info */
+        DGAModePtr                      pDGAMode;
+        int                             nDGAMode;
+        OptionInfoPtr                   Options;
+
+	/*add by Wilhelm*/
+	int				max_displayX;
+	int				max_displayY;
+	struct udev_monitor *uevent_monitor;
+	pointer			uevent_handler
+} FBDevRec, *FBDevPtr;
+#define FBDEVPTR(p) ((FBDevPtr)((p)->driverPrivate))
 #endif

@@ -210,16 +210,37 @@ static void fbdev_hdmi_output_restore(xf86OutputPtr output)
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 }
 
+struct cubie_resolution_support {
+	int	HDisplay;
+	int	VDisplay;
+};
+static struct cubie_resolution_support cubie_resolution_support_list[10]={
+	{720,240},
+	{720,288},
+	{720,480},
+	{720,576},
+	{1280,720},
+	{1920,540},
+	{1920,1080},
+	{1920,2160},
+	{1280,1440},
+	{3840,2160},
+};
+
 static int fbdev_hdmi_output_mode_valid(xf86OutputPtr output, DisplayModePtr pMode)
 {
-    IGNORE( output );
-    IGNORE( pMode );
-
-    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
     /* TODO: return MODE_ERROR in case of unsupported mode */
-    xf86DrvMsg(0, X_INFO, "Mode %i x %i valid\n", pMode->HDisplay, pMode->VDisplay );
-
-    return MODE_OK;
+    int i;
+    IGNORE( output );
+    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
+    for(i=0;i<10;i++){
+	if((cubie_resolution_support_list[i].HDisplay == pMode->HDisplay)
+	&& (cubie_resolution_support_list[i].VDisplay == pMode->VDisplay)){
+	return MODE_OK;
+	}
+    }
+    xf86DrvMsg(0, X_INFO, "Mode %i x %i unvalid\n", pMode->HDisplay, pMode->VDisplay );
+    return -1;
 }
 
 static Bool fbdev_hdmi_output_mode_fixup(xf86OutputPtr output, DisplayModePtr mode, DisplayModePtr adjusted_mode)
@@ -246,34 +267,6 @@ static void fbdev_hdmi_output_commit(xf86OutputPtr output)
 
 static void fbdev_hdmi_output_mode_set(xf86OutputPtr output, DisplayModePtr mode, DisplayModePtr adjusted_mode)
 {
- //   MaliPtr fPtr = MALIPTR(output->scrn);
-    int file;
-    fb_videomodeptr	my_fb_videomodeptr = output->driver_private;
-    IGNORE( output );
-    IGNORE( mode );
-    IGNORE( adjusted_mode );
-    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-    file = open("/dev/fb0",O_RDWR);
-
-    if ( ioctl(file , FBIOPUT_VSCREENINFO, &my_fb_videomodeptr) < 0 )
-    {
-        xf86DrvMsg(0, X_INFO, "Unable to get VSCREENINFO\n");
-    }
-//    if ( ioctl( fPtr->fb_hdmi_fd, FBIOGET_VSCREENINFO, &fPtr->fb_hdmi_var ) < 0 )
-//    {
-//        xf86DrvMsg(0, X_INFO, "Unable to get VSCREENINFO\n");
-//    }
-
-   // fPtr->fb_hdmi_var.xres = mode->HDisplay;
-  //  fPtr->fb_hdmi_var.yres = mode->VDisplay;
-  //  fPtr->fb_hdmi_var.xres_virtual = mode->HDisplay;
-  //  fPtr->fb_hdmi_var.yres_virtual = mode->VDisplay*2;
-  //  xf86DrvMsg(0, X_INFO, "Changing mode to %i %i %i %i\n", fPtr->fb_hdmi_var.xres, fPtr->fb_hdmi_var.yres, fPtr->fb_hdmi_var.xres_virtual, fPtr->fb_hdmi_var.yres_virtual);
-  //  if ( ioctl( fPtr->fb_hdmi_fd, FBIOPUT_VSCREENINFO, &fPtr->fb_hdmi_var ) < 0 )
-  //  {
-    //    xf86DrvMsg(0, X_INFO, "Unable to set mode!\n");
- //   }
-
 }
 
 static xf86OutputStatus fbdev_hdmi_output_detect(xf86OutputPtr output)
@@ -361,6 +354,58 @@ convert_to_video_timing(fb_videomodeptr timing)
     return mode;
 }
 
+static void          
+fbdev2xfree_timing(struct fb_var_screeninfo *var, DisplayModePtr mode)                                                                      
+{
+    mode->Clock = var->pixclock ? 1000000000 / var->pixclock : 0;                                                                           
+    mode->HDisplay = var->xres;
+    mode->HSyncStart = mode->HDisplay + var->right_margin;
+    mode->HSyncEnd = mode->HSyncStart + var->hsync_len;
+    mode->HTotal = mode->HSyncEnd + var->left_margin;
+    mode->VDisplay = var->yres;
+    mode->VSyncStart = mode->VDisplay + var->lower_margin;
+    mode->VSyncEnd = mode->VSyncStart + var->vsync_len;
+    mode->VTotal = mode->VSyncEnd + var->upper_margin;                                                                                      
+    mode->Flags = 0; 
+    mode->Flags |= var->sync & FB_SYNC_HOR_HIGH_ACT ? V_PHSYNC : V_NHSYNC;
+    mode->Flags |= var->sync & FB_SYNC_VERT_HIGH_ACT ? V_PVSYNC : V_NVSYNC;
+    mode->Flags |= var->sync & FB_SYNC_COMP_HIGH_ACT ? V_PCSYNC : V_NCSYNC;                                                                 
+    if (var->sync & FB_SYNC_BROADCAST)
+        mode->Flags |= V_BCAST;
+    if ((var->vmode & FB_VMODE_MASK) == FB_VMODE_INTERLACED)
+        mode->Flags |= V_INTERLACE;
+    else if ((var->vmode & FB_VMODE_MASK) == FB_VMODE_DOUBLE)                                                                               
+        mode->Flags |= V_DBLSCAN;
+    mode->SynthClock = mode->Clock;
+    mode->CrtcHDisplay = mode->HDisplay;
+    mode->CrtcHSyncStart = mode->HSyncStart;
+    mode->CrtcHSyncEnd = mode->HSyncEnd;
+    mode->CrtcHTotal = mode->HTotal;
+    mode->CrtcVDisplay = mode->VDisplay;
+    mode->CrtcVSyncStart = mode->VSyncStart;
+    mode->CrtcVSyncEnd = mode->VSyncEnd;
+    mode->CrtcVTotal = mode->VTotal;
+    mode->CrtcHAdjusted = FALSE;
+    mode->CrtcVAdjusted = FALSE;                                                                                                            
+}
+static DisplayModePtr
+fb2mode(fb_videomodeptr fb_videomode, int size)
+{
+	DisplayModePtr displaymode = NULL , Mode = NULL;
+
+    for (i = 0; i < size; i++,fb_videomode++) {
+        DisplayModePtr Mode;
+
+        Mode = calloc(1, sizeof(DisplayModeRec));
+        if (Mode) {
+			fbdev2xfree_timing(fb_videomode , Mode);
+			Modes = xf86ModesAdd(Modes, Mode);
+        }
+		if(!displaymode)
+			displaymode = Modes;
+    }
+	return displaymode;
+}
 
 static char edid_array[1024];
 static char *edid_data = edid_array;
@@ -369,16 +414,11 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
     DisplayModePtr mode_ptr;
     DisplayModePtr Modes = NULL, Last = NULL;
     ScrnInfoPtr pScrn = output->scrn;
-
+    FBDevPtr fbdevptr = FBDEVPTR(pScrn);
 	int file,size,i;
 	void *private_data = xnfcalloc(1, 18 * sizeof(fb_videomode));
-	fb_videomodeptr	mymode;
 	unsigned long arg[4];
 
-	Modes = pScrn->monitor->Modes;
-	Last  = pScrn->monitor->Last;
-	pScrn->monitor->Modes = NULL;
-	pScrn->monitor->Last  = NULL;
 
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 	file = open("/dev/disp",O_RDWR);
@@ -386,6 +426,7 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 		xf86DrvMsg(0, X_INFO, "%s %s fb0 open failed! %d\n",__FILE__,__func__,__LINE__);
 	}
 
+	memset(edid_data,0,1024);
 	arg[0] = 1;
 	arg[1] =(unsigned long *) edid_data;
 	size = ioctl(file,DISP_CMD_HDMI_GET_EDID,arg);
@@ -394,6 +435,7 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 		xf86DrvMsg(0, X_INFO, "%s %s DISP_CMD_HDMI_GET_EDID err!%d\n",__FILE__,__func__,__LINE__);
 	}
 
+	memset(private_data,0,1024);
 	arg[0] = 1;
 	arg[1] =(unsigned long *) private_data;
 	size = ioctl(file,DISP_CMD_HDMI_GET_VIDEOMODE_LIST,arg);
@@ -401,7 +443,6 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 	if(size <= 0 || size > 18){
 		xf86DrvMsg(0, X_INFO, "%s %s size err!%d\n",__FILE__,__func__,__LINE__);
 	}
-
 
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 
@@ -413,127 +454,38 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
     }else{
 	xf86DrvMsg(0, X_INFO, "%s %s xf86InterpretEDID err %d\n",__FILE__,__func__,__LINE__);
     }
-   if(pScrn->monitor->Modes)
-    mode_ptr = pScrn->monitor->Modes;
-else
-    mode_ptr = NULL;
-while(mode_ptr){
-    xf86DrvMsg(0, X_INFO, "%s HD %d VD %d %d\n",mode_ptr->name,mode_ptr->HDisplay,mode_ptr->VDisplay,__LINE__);
-    if(mode_ptr == pScrn->monitor->Last)
-        break;
-    mode_ptr = mode_ptr->next;
-}
-    mode_ptr  = pScrn->monitor->Modes;
-    pScrn->monitor->Modes = Modes;
-    pScrn->monitor->Last  = Last;
 
+	mode_ptr = fb2mode((fb_videomodeptr)private_data , size);
+ /*
+    mode_ptr = xf86OutputGetEDIDModes(output);
+    Last     =  mode_ptr;
+while(Last){
+    xf86DrvMsg(0, X_INFO, "%s HD %d VD %d %d\n",
+	Last->name,Last->HDisplay,Last->VDisplay,__LINE__);
+    xf86SetModeCrtc(Last,pScrn->adjustFlags);
+	if(fbdevptr->max_displayX < Last->HDisplay)
+		fbdevptr->max_displayX = Last->HDisplay;
+	if(fbdevptr->max_displayY < Last->VDisplay)
+		fbdevptr->max_displayY = Last->VDisplay;
+	if(pScrn->virtualX<Last->HDisplay)
+		pScrn->virtualX = Last->HDisplay;
+	if(pScrn->virtualY<Last->VDisplay)
+		pScrn->virtualY = Last->VDisplay;
+	xf86DrvMsg(0, X_INFO, "MAXX %d MAXY %d HD %d VD %d\n",fbdevptr->max_displayX,fbdevptr->max_displayY,Last->HDisplay,Last->VDisplay);
+
+    if(Last->next)
+	Last = Last->next;
+     else
+	break;
+
+    if(Last == mode_ptr)
+	break;
+}
+*/
+	
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 return mode_ptr;
  
-#if 0
-	mymode = private_data;
-	output->driver_private = private_data;
-	xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-	for(i=0; i<size; mymode++, i++){
-
-
-        	DisplayModePtr Mode,VMode;
-		Mode = convert_to_video_timing(mymode);
-		VMode = convert_to_video_timing(mymode);
-
-		Modes = xf86ModesAdd(Modes, Mode);
-            if(!VModes)
-                VModes = VMode;
-            else{
-                VModes->next = VMode;
-                VMode->prev  = VModes;
-                VModes       = VModes->next;
-            }
-
-		if(!First){
-			First = Modes;
-			VFirst= VModes;
-            	}
-		End = Modes;
-		VEnd= VModes;
-    xf86DrvMsg(0, X_INFO, "%s VRefresh %f clock %d %d\n",Modes->name,Modes->VRefresh,Modes->Clock,__LINE__);
-	}
-        pScrn->monitor->Modes   = First;
-        pScrn->monitor->Last    = End;
-	pScrn->modes		= VFirst;
-//	VFirst->prev		= VEnd;
-//	VEnd->next		= VFirst;
-	mode_ptr	= VFirst;
-//	mode_ptr	= First;
-	close(file);
-	close(edid_file);
-    return mode_ptr;
-#endif
-#if 0
-//    mode_ptr =   fbdev_make_mode( 1024, 600 ,NULL);
-    //pScrn->monitor
-    /* add EDID detect by Wilhelm Viktor */
-    DisplayModePtr Modes = NULL,VModes = NULL, First = NULL,VFirst, End, VEnd,prefered;
-    int i,file,max_x=0,max_y=0;
-    float max_refresh=0;
-    static  char data_array[256];
-    static  char *data;
-    xf86MonPtr mon = NULL;
-    data = (char *) data_array;
-    file = open("/dev/i2c-1", O_RDWR);
-    ioctl(file,I2C_SLAVE_FORCE,0x50);
-    memset(data,0,256);
-    read(file,data,128);
-    mon = xf86InterpretEDID(pScrn->scrnIndex,data);
-    xf86OutputSetEDID(output, mon);
-    /* std modes add */
-    for(i=0; i<8; i++){
-        DisplayModePtr Mode,VMode;
-        if(mon->timings2[i].hsize && mon->timings2[i].vsize && mon->timings2[i].refresh){
-            Mode = fbdev_make_mode_edid(mon->timings2[i].hsize,mon->timings2[i].vsize,
-                mon->timings2[i].refresh,0);
-            VMode = fbdev_make_mode_edid(mon->timings2[i].hsize,mon->timings2[i].vsize,
-                mon->timings2[i].refresh,1);
-            Modes = xf86ModesAdd(Modes, Mode);
-            if(!VModes)
-                VModes = VMode;
-            else{
-                VModes->next = VMode;
-                VMode->prev  = VModes;
-                VModes       = VModes->next;
-            }
-            if(!First){
-                First = Modes;
-                VFirst= VModes;
-            }
-    //      xf86DrvMsg(pScrn->scrnIndex, X_INFO, "VModes %p %p %p  %d\n",VModes,VModes->prev,VModes->next,i);
-            if((max_x * max_y) < (Modes->HDisplay * Modes->VDisplay)){
-                prefered    = VModes;
-                max_x       = Modes->HDisplay;
-                max_y       = Modes->VDisplay;
-            }
-            End = Modes;
-            VEnd= VModes;
-            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "HDisplay %d VDisplay %d\n",Modes->HDisplay,Modes->VDisplay);
-            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "hsize %d vsize %d refresh %d\n",mon->timings2[i].hsize,
-                mon->timings2[i].vsize,mon->timings2[i].refresh);
-        }
-    }
-    pScrn->monitor->Modes   = First;
-    pScrn->monitor->Last    = End;
-
-//  VEnd->next      = VFirst;
-//  VFirst->prev        = VEnd;
-//  pScrn->modes        = prefered;
-    mode_ptr        = prefered;
-//  xf86SetModeDefaultName(mode_ptr);
-    /* detailed timing modes add */
-    {
-    }
-        xf86DrvMsg(0, X_INFO, "pScrn->modes %p \n",pScrn->modes);
-    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-    close(file);
-#endif
 }
 
 

@@ -1,4 +1,4 @@
-/*
+private_data/*
  * Authors:  Alan Hourihane, <alanh@fairlite.demon.co.uk>
  *	     Michel Dänzer, <michel@tungstengraphics.com>
  */
@@ -33,6 +33,7 @@
 #include "xf86xv.h"
 
 #include "compat-api.h"
+#include "cubie_hdmi.h"
 
 #ifdef XSERVER_LIBPCIACCESS
 #include <pciaccess.h>
@@ -175,28 +176,6 @@ FBDevSetup(pointer module, pointer opts, int *errmaj, int *errmin)
 
 #endif /* XFree86LOADER */
 
-/* -------------------------------------------------------------------- */
-/* our private data, and two functions to allocate/free this            */
-
-typedef struct {
-	unsigned char*			fbstart;
-	unsigned char*			fbmem;
-	int				fboff;
-	int				lineLength;
-	int				rotate;
-	Bool				shadowFB;
-	void				*shadow;
-	CloseScreenProcPtr		CloseScreen;
-	CreateScreenResourcesProcPtr	CreateScreenResources;
-	void				(*PointerMoved)(SCRN_ARG_TYPE arg, int x, int y);
-	EntityInfoPtr			pEnt;
-	/* DGA info */
-	DGAModePtr			pDGAMode;
-	int				nDGAMode;
-	OptionInfoPtr			Options;
-} FBDevRec, *FBDevPtr;
-
-#define FBDEVPTR(p) ((FBDevPtr)((p)->driverPrivate))
 
 static Bool
 FBDevGetRec(ScrnInfoPtr pScrn)
@@ -231,6 +210,23 @@ FBDevIdentify(int flags)
 	xf86PrintChipsets(FBDEV_NAME, "driver for framebuffer", FBDevChipsets);
 }
 
+Bool
+cubie_fbdevHWSwitchMode(ScrnInfoPtr pScrn, DisplayModePtr mode)
+{
+	ScreenPtr Screen = xf86ScrnToScreen(pScrn);
+	FBDevPtr fPtr = FBDEVPTR(pScrn);
+
+    if (!fbdevHWSwitchMode(pScrn, mode)){
+        	return FALSE;
+	}
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+	       "%s %dx%d to %dx%d\n", __func__,pScrn->virtualX,
+		pScrn->virtualY,mode->HDisplay,mode->VDisplay);
+        pScrn->virtualX = mode->HDisplay;
+        pScrn->virtualY = mode->VDisplay;
+	return TRUE;
+}
+
 
 #ifdef XSERVER_LIBPCIACCESS
 static Bool FBDevPciProbe(DriverPtr drv, int entity_num,
@@ -256,7 +252,7 @@ static Bool FBDevPciProbe(DriverPtr drv, int entity_num,
 	    pScrn->Probe         = FBDevProbe;
 	    pScrn->PreInit       = FBDevPreInit;
 	    pScrn->ScreenInit    = FBDevScreenInit;
-	    pScrn->SwitchMode    = fbdevHWSwitchModeWeak();
+	    pScrn->SwitchMode    = cubie_fbdevHWSwitchMode;
 	    pScrn->AdjustFrame   = fbdevHWAdjustFrameWeak();
 	    pScrn->EnterVT       = fbdevHWEnterVTWeak();
 	    pScrn->LeaveVT       = fbdevHWLeaveVTWeak();
@@ -373,7 +369,7 @@ FBDevProbe(DriverPtr drv, int flags)
 		    pScrn->Probe         = FBDevProbe;
 		    pScrn->PreInit       = FBDevPreInit;
 		    pScrn->ScreenInit    = FBDevScreenInit;
-		    pScrn->SwitchMode    = fbdevHWSwitchModeWeak();
+		    pScrn->SwitchMode    = cubie_fbdevHWSwitchMode;
 		    pScrn->AdjustFrame   = fbdevHWAdjustFrameWeak();
 		    pScrn->EnterVT       = fbdevHWEnterVTWeak();
 		    pScrn->LeaveVT       = fbdevHWLeaveVTWeak();
@@ -396,7 +392,6 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 	int default_depth, fbbpp;
 	const char *s;
 	int type;
-
 	if (flags & PROBE_DETECT) return FALSE;
 
 	TRACE_ENTER("PreInit");
@@ -531,13 +526,8 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
     if ( !xf86InitialConfiguration( pScrn, TRUE ) )
     {
         xf86DrvMsg( pScrn->scrnIndex, X_ERROR, "xf86InitialConfiguration failed!\n" );
-       return FALSE;
+      // return FALSE;
     }
-    pScrn->frameX0 = pScrn->modes->HDisplay;
-    pScrn->frameY0 = pScrn->modes->VDisplay;
-    pScrn->frameX1 = pScrn->modes->HDisplay;
-    pScrn->frameY1 = pScrn->modes->VDisplay;
-	
 	/* select video modes */
 	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against framebuffer device...\n");
 	fbdevHWSetVideoModes(pScrn);
@@ -547,7 +537,6 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 		
 		if (mode != NULL) do {
 			mode->status = xf86CheckModeForMonitor(mode, pScrn->monitor);
-	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "status %d\n",mode->status);
 		
 			mode = mode->next;
 		} while (mode != NULL && mode != first);
@@ -558,6 +547,10 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 	if (NULL == pScrn->modes)
 		fbdevHWUseBuildinMode(pScrn);
 	pScrn->currentMode = pScrn->modes;
+	if(fPtr->max_displayY && fPtr->max_displayX){
+                pScrn->virtualX = fPtr->max_displayX;
+                pScrn->virtualY = fPtr->max_displayY;
+	}
 
 	/* First approximation, may be refined in ScreenInit */
 	pScrn->displayWidth = pScrn->virtualX;
@@ -636,6 +629,8 @@ FBDevCreateScreenResources(ScreenPtr pScreen)
     FBDevPtr fPtr = FBDEVPTR(pScrn);
     Bool ret;
 
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+		"%s %s %d\n",__FILE__, __func__,__LINE__);
     pScreen->CreateScreenResources = fPtr->CreateScreenResources;
     ret = pScreen->CreateScreenResources(pScreen);
     pScreen->CreateScreenResources = FBDevCreateScreenResources;
@@ -659,6 +654,8 @@ FBDevShadowInit(ScreenPtr pScreen)
 {
     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     FBDevPtr fPtr = FBDEVPTR(pScrn);
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+		"%s %s %d\n",__FILE__, __func__,__LINE__);
     
     if (!shadowSetup(pScreen)) {
 	return FALSE;
@@ -668,6 +665,83 @@ FBDevShadowInit(ScreenPtr pScreen)
     pScreen->CreateScreenResources = FBDevCreateScreenResources;
 
     return TRUE;
+}
+
+static void
+CubieHandleUEvents(int fd, void *closure)
+{
+    ScrnInfoPtr scrn = closure;
+    intel_screen_private *intel = intel_get_screen_private(scrn);
+    struct udev_device *dev;
+    const char *hotplug;
+    struct stat s;
+    dev_t udev_devnum;
+
+    dev = udev_monitor_receive_device(intel->uevent_monitor);
+    if (!dev)
+        return;
+
+    udev_devnum = udev_device_get_devnum(dev);
+    if (fstat(intel->drmSubFD, &s)) {
+        udev_device_unref(dev);
+        return;
+    }
+    /*
+     * Check to make sure this event is directed at our
+     * device (by comparing dev_t values), then make
+     * sure it's a hotplug event (HOTPLUG=1)
+     */
+
+    hotplug = udev_device_get_property_value(dev, "HOTPLUG");
+
+    if (memcmp(&s.st_rdev, &udev_devnum, sizeof (dev_t)) == 0 &&
+            hotplug && atoi(hotplug) == 1)
+        RRGetInfo(xf86ScrnToScreen(scrn), TRUE);
+
+    udev_device_unref(dev);
+}
+
+static void
+I830UeventInit(ScrnInfoPtr pScrn)
+{
+	FBDevPtr fPtr = FBDEVPTR(pScrn);
+    struct udev *u;
+    struct udev_monitor *mon;
+    MessageType from = X_CONFIG;
+	
+    xf86DrvMsg(scrn->scrnIndex, from, "hotplug detection: \"%s\"\n",
+            hotplug ? "enabled" : "disabled");
+    
+	u = udev_new();
+    if (!u)
+        return;
+
+    mon = udev_monitor_new_from_netlink(u, "udev");
+
+    if (!mon) {
+        udev_unref(u);
+        return;
+    }
+
+    if (udev_monitor_filter_add_match_subsystem_devtype(mon,
+                "hdmi",
+                "sunxi_hdmi") < 0 ||
+            udev_monitor_enable_receiving(mon) < 0)
+    {
+        udev_monitor_unref(mon);
+        udev_unref(u);
+        return;
+    }
+
+    fPtr->uevent_handler = xf86AddGeneralHandler(udev_monitor_get_fd(mon),
+                              I830HandleUEvents, scrn);
+    if (!fPtr->uevent_handler) {
+        udev_monitor_unref(mon);
+        udev_unref(u);
+        return;
+    }
+
+    fPtr->uevent_monitor = mon;
 }
 
 
@@ -937,6 +1011,8 @@ FBDevCloseScreen(CLOSE_SCREEN_ARGS_DECL)
 {
 	ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
 	FBDevPtr fPtr = FBDEVPTR(pScrn);
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+		"%s %s %d\n",__FILE__, __func__,__LINE__);
 	
 	fbdevHWRestore(pScrn);
 	fbdevHWUnmapVidmem(pScrn);
@@ -987,6 +1063,8 @@ FBDevPointerMoved(SCRN_ARG_TYPE arg, int x, int y)
     SCRN_INFO_PTR(arg);
     FBDevPtr fPtr = FBDEVPTR(pScrn);
     int newX, newY;
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+		"%s %s %d\n",__FILE__, __func__,__LINE__);
 
     switch (fPtr->rotate)
     {
@@ -1185,6 +1263,19 @@ FBDevDriverFunc(ScrnInfoPtr pScrn, xorgDriverFuncOp op, pointer ptr)
 
 static Bool fbdev_crtc_config_resize( ScrnInfoPtr pScrn, int width, int height )
 {
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+   "%s (%d, %d) -> (%d, %d)\n", __FUNCTION__,
+         pScrn->virtualX, pScrn->virtualY,
+         width, height);
+
+    if (pScrn->virtualX == width && pScrn->virtualY == height)
+        return TRUE;
+    if (width == 0 || height == 0)
+        return FALSE;
+
+	pScrn->virtualX = width;
+	pScrn->virtualY = height; 
+	pScrn->displayWidth = width;
     return TRUE;
 }
 
