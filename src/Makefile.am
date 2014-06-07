@@ -24,10 +24,13 @@
 # _ladir passes a dummy rpath to libtool so the thing will actually link
 # TODO: -nostdlib/-Bstatic/-lgcc platform magic, not installing the .a, etc.
 AM_CFLAGS = @XORG_CFLAGS@
-fbdev_drv_la_LTLIBRARIES = fbdev_drv.la
-fbdev_drv_la_LDFLAGS = -module -avoid-version
-fbdev_drv_ladir = @moduledir@/drivers
+cubiefb_drv_la_LTLIBRARIES = cubiefb_drv.la
+cubiefb_drv_la_LDFLAGS = -module -avoid-version
+cubiefb_drv_ladir = @moduledir@/drivers
 
-fbdev_drv_la_SOURCES = \
+cubiefb_drv_la_SOURCES = \
          compat-api.h \
-         fbdev.c
+         fbdev.c \
+	 cubie_hdmi.c \
+	 cubie_hdmi.h \
+	 drv_display.h

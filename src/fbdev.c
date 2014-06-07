@@ -12,7 +12,7 @@
 /* all driver need this */
 #include "xf86.h"
 #include "xf86_OSproc.h"
-
+#include "xf86Crtc.h"
 #include "mipointer.h"
 #include "micmap.h"
 #include "colormapst.h"
@@ -67,6 +67,7 @@ static Bool	FBDevDGAInit(ScrnInfoPtr pScrn, ScreenPtr pScreen);
 static Bool	FBDevDriverFunc(ScrnInfoPtr pScrn, xorgDriverFuncOp op,
 				pointer ptr);
 
+static void FBDev_crtc_config( ScrnInfoPtr pScrn );
 
 enum { FBDEV_ROTATE_NONE=0, FBDEV_ROTATE_CW=270, FBDEV_ROTATE_UD=180, FBDEV_ROTATE_CCW=90 };
 
@@ -80,15 +81,15 @@ enum { FBDEV_ROTATE_NONE=0, FBDEV_ROTATE_CW=270, FBDEV_ROTATE_UD=180, FBDEV_ROTA
 static int pix24bpp = 0;
 
 #define FBDEV_VERSION		4000
-#define FBDEV_NAME		"FBDEV"
-#define FBDEV_DRIVER_NAME	"fbdev"
+#define FBDEV_NAME		"CUBIEFB"
+#define FBDEV_DRIVER_NAME	"cubiefb"
 
 #ifdef XSERVER_LIBPCIACCESS
 static const struct pci_id_match fbdev_device_match[] = {
     {
 	PCI_MATCH_ANY, PCI_MATCH_ANY, PCI_MATCH_ANY, PCI_MATCH_ANY,
 	0x00030000, 0x00ffffff, 0
-    },
+	},
 
     { 0, 0, 0 },
 };
@@ -115,7 +116,7 @@ _X_EXPORT DriverRec FBDEV = {
 
 /* Supported "chipsets" */
 static SymTabRec FBDevChipsets[] = {
-    { 0, "fbdev" },
+    { 0, "cubiefb" },
     {-1, NULL }
 };
 
@@ -143,7 +144,7 @@ MODULESETUPPROTO(FBDevSetup);
 
 static XF86ModuleVersionInfo FBDevVersRec =
 {
-	"fbdev",
+	"cubiefb",
 	MODULEVENDORSTRING,
 	MODINFOSTRING1,
 	MODINFOSTRING2,
@@ -155,7 +156,7 @@ static XF86ModuleVersionInfo FBDevVersRec =
 	{0,0,0,0}
 };
 
-_X_EXPORT XF86ModuleData fbdevModuleData = { &FBDevVersRec, FBDevSetup, NULL };
+_X_EXPORT XF86ModuleData cubiefbModuleData = { &FBDevVersRec, FBDevSetup, NULL };
 
 pointer
 FBDevSetup(pointer module, pointer opts, int *errmaj, int *errmin)
@@ -465,7 +466,7 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 
 	pScrn->progClock = TRUE;
 	pScrn->rgbBits   = 8;
-	pScrn->chipset   = "fbdev";
+	pScrn->chipset   = "cubiefb";
 	pScrn->videoRam  = fbdevHWGetVidmem(pScrn);
 
 	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "hardware: %s (video memory:"
@@ -517,17 +518,37 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 	  }
 	}
 
-	/* select video modes */
 
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "FBDev_crtc_config\n");
+    FBDev_crtc_config( pScrn );
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "FBDEV_hdmi_init\n");
+   if ( !FBDEV_hdmi_init( pScrn ) )
+    {
+        xf86DrvMsg( pScrn->scrnIndex, X_ERROR, "FBDev_hdmi_init failed!\n" );
+        return FALSE;
+    }
+
+    if ( !xf86InitialConfiguration( pScrn, TRUE ) )
+    {
+        xf86DrvMsg( pScrn->scrnIndex, X_ERROR, "xf86InitialConfiguration failed!\n" );
+       return FALSE;
+    }
+    pScrn->frameX0 = pScrn->modes->HDisplay;
+    pScrn->frameY0 = pScrn->modes->VDisplay;
+    pScrn->frameX1 = pScrn->modes->HDisplay;
+    pScrn->frameY1 = pScrn->modes->VDisplay;
+	
+	/* select video modes */
 	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against framebuffer device...\n");
 	fbdevHWSetVideoModes(pScrn);
-
 	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against monitor...\n");
 	{
 		DisplayModePtr mode, first = mode = pScrn->modes;
 		
 		if (mode != NULL) do {
 			mode->status = xf86CheckModeForMonitor(mode, pScrn->monitor);
+	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "status %d\n",mode->status);
+		
 			mode = mode->next;
 		} while (mode != NULL && mode != first);
 
@@ -1160,3 +1181,31 @@ FBDevDriverFunc(ScrnInfoPtr pScrn, xorgDriverFuncOp op, pointer ptr)
 	    return FALSE;
     }
 }
+
+
+static Bool fbdev_crtc_config_resize( ScrnInfoPtr pScrn, int width, int height )
+{
+    return TRUE;
+}
+
+static const xf86CrtcConfigFuncsRec fbdev_crtc_config_funcs =
+{
+    .resize = fbdev_crtc_config_resize,
+};
+
+
+static void FBDev_crtc_config( ScrnInfoPtr pScrn )
+{
+    xf86CrtcConfigPtr xf86_config;
+    int max_width, max_height;
+
+    /* Allocate an xf86CrtcConfig */
+    xf86CrtcConfigInit (pScrn, &fbdev_crtc_config_funcs);
+    xf86_config = XF86_CRTC_CONFIG_PTR(pScrn);
+
+    max_width = 2048;
+    max_height = 2048;
+
+    xf86CrtcSetSizeRange (pScrn, 640, 480, max_width, max_height);
+}
+
