@@ -477,6 +477,7 @@ typedef struct
 	int (*hdmi_get_mode)(int hdmi_mode);
 	int (*hdmi_mode_support)(disp_tv_mode mode);
 	int (*hdmi_get_HPD_status)(void);
+	int (*hdmi_get_EDID)(unsigned char buf[]);
 	int (*hdmi_set_pll)(unsigned int pll, unsigned int clk);
 	int (*hdmi_dvi_enable)(unsigned int mode);
 	int (*hdmi_dvi_support)(void);
@@ -732,6 +733,7 @@ typedef enum tag_DISP_CMD
 	DISP_CMD_HDMI_GET_HPD_STATUS = 0xc5,
 	DISP_CMD_HDMI_SET_SRC = 0xc6,
 	DISP_CMD_HDMI_GET_VIDEOMODE_LIST = 0xc7,
+	DISP_CMD_HDMI_GET_EDID = 0xc8,
 
 	//----lcd----
 	DISP_CMD_LCD_ENABLE = 0x100,

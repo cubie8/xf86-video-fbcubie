@@ -361,11 +361,13 @@ convert_to_video_timing(fb_videomodeptr timing)
     return mode;
 }
 
+
+static char edid_array[1024];
+static char *edid_data = edid_array;
 static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 {
     DisplayModePtr mode_ptr;
-    DisplayModePtr Modes = NULL,VModes = NULL, First = NULL;
-    DisplayModePtr VFirst, End, VEnd;
+    DisplayModePtr Modes = NULL, Last = NULL;
     ScrnInfoPtr pScrn = output->scrn;
 
 	int file,size,i;
@@ -373,10 +375,23 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 	fb_videomodeptr	mymode;
 	unsigned long arg[4];
 
+	Modes = pScrn->monitor->Modes;
+	Last  = pScrn->monitor->Last;
+	pScrn->monitor->Modes = NULL;
+	pScrn->monitor->Last  = NULL;
+
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 	file = open("/dev/disp",O_RDWR);
 	if(file < 0){
 		xf86DrvMsg(0, X_INFO, "%s %s fb0 open failed! %d\n",__FILE__,__func__,__LINE__);
+	}
+
+	arg[0] = 1;
+	arg[1] =(unsigned long *) edid_data;
+	size = ioctl(file,DISP_CMD_HDMI_GET_EDID,arg);
+
+	if(size < 0 ){
+		xf86DrvMsg(0, X_INFO, "%s %s DISP_CMD_HDMI_GET_EDID err!%d\n",__FILE__,__func__,__LINE__);
 	}
 
 	arg[0] = 1;
@@ -387,26 +402,35 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 		xf86DrvMsg(0, X_INFO, "%s %s size err!%d\n",__FILE__,__func__,__LINE__);
 	}
 
-    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-
-/*
-get edid operate because of have api get it
-so I read a file to instead of the api now
-*/
-
-    int edid_file;
-    edid_file = open("/edid_rawdata", O_RDWR);
-    static  char data_array[256];
-    static  char *data = data_array;
-    memset(data,0,256);
-    read(edid_file,data,128);
 
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 
     xf86MonPtr mon = NULL;
-    mon = xf86InterpretEDID(pScrn->scrnIndex,data);
-    xf86OutputSetEDID(output, mon);
+    mon = xf86InterpretEDID(pScrn->scrnIndex,edid_data);
+    if(mon){
+	mon->flags |= MONITOR_EDID_COMPLETE_RAWDATA;
+	xf86OutputSetEDID(output, mon);
+    }else{
+	xf86DrvMsg(0, X_INFO, "%s %s xf86InterpretEDID err %d\n",__FILE__,__func__,__LINE__);
+    }
+   if(pScrn->monitor->Modes)
+    mode_ptr = pScrn->monitor->Modes;
+else
+    mode_ptr = NULL;
+while(mode_ptr){
+    xf86DrvMsg(0, X_INFO, "%s HD %d VD %d %d\n",mode_ptr->name,mode_ptr->HDisplay,mode_ptr->VDisplay,__LINE__);
+    if(mode_ptr == pScrn->monitor->Last)
+        break;
+    mode_ptr = mode_ptr->next;
+}
+    mode_ptr  = pScrn->monitor->Modes;
+    pScrn->monitor->Modes = Modes;
+    pScrn->monitor->Last  = Last;
 
+    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
+return mode_ptr;
+ 
+#if 0
 	mymode = private_data;
 	output->driver_private = private_data;
 	xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
@@ -444,6 +468,7 @@ so I read a file to instead of the api now
 	close(file);
 	close(edid_file);
     return mode_ptr;
+#endif
 #if 0
 //    mode_ptr =   fbdev_make_mode( 1024, 600 ,NULL);
     //pScrn->monitor
