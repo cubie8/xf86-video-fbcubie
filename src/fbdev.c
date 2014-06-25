@@ -1,4 +1,4 @@
-private_data/*
+/*
  * Authors:  Alan Hourihane, <alanh@fairlite.demon.co.uk>
  *	     Michel Dänzer, <michel@tungstengraphics.com>
  */
@@ -32,6 +32,8 @@ private_data/*
 
 #include "xf86xv.h"
 
+#include <sys/stat.h>
+#include <unistd.h>
 #include "compat-api.h"
 #include "cubie_hdmi.h"
 
@@ -210,7 +212,7 @@ FBDevIdentify(int flags)
 	xf86PrintChipsets(FBDEV_NAME, "driver for framebuffer", FBDevChipsets);
 }
 
-Bool
+static Bool
 cubie_fbdevHWSwitchMode(ScrnInfoPtr pScrn, DisplayModePtr mode)
 {
 	ScreenPtr Screen = xf86ScrnToScreen(pScrn);
@@ -225,6 +227,29 @@ cubie_fbdevHWSwitchMode(ScrnInfoPtr pScrn, DisplayModePtr mode)
         pScrn->virtualX = mode->HDisplay;
         pScrn->virtualY = mode->VDisplay;
 	return TRUE;
+}
+
+static Bool
+cubie_fbdevHWEnterVT(ScrnInfoPtr pScrn)
+{
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+	       "%s %dx%d to %dx%d\n", __func__,pScrn->virtualX,
+		pScrn->virtualY,pScrn->currentMode->HDisplay,
+		pScrn->currentMode->VDisplay);
+    if (!fbdevHWModeInit(pScrn, pScrn->currentMode))
+        return FALSE;
+    fbdevHWAdjustFrame(pScrn, pScrn->frameX0, pScrn->frameY0);
+    return TRUE;
+}
+
+static void
+cubie_fbdevHWLeaveVT(ScrnInfoPtr pScrn)
+{
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+	       "%s %dx%d to %dx%d\n", __func__,pScrn->virtualX,
+		pScrn->virtualY,pScrn->currentMode->HDisplay,
+		pScrn->currentMode->VDisplay);
+    fbdevHWRestore(pScrn);
 }
 
 
@@ -254,8 +279,8 @@ static Bool FBDevPciProbe(DriverPtr drv, int entity_num,
 	    pScrn->ScreenInit    = FBDevScreenInit;
 	    pScrn->SwitchMode    = cubie_fbdevHWSwitchMode;
 	    pScrn->AdjustFrame   = fbdevHWAdjustFrameWeak();
-	    pScrn->EnterVT       = fbdevHWEnterVTWeak();
-	    pScrn->LeaveVT       = fbdevHWLeaveVTWeak();
+	    pScrn->EnterVT       = cubie_fbdevHWEnterVT;
+	    pScrn->LeaveVT       = cubie_fbdevHWLeaveVT;
 	    pScrn->ValidMode     = fbdevHWValidModeWeak();
 
 	    xf86DrvMsg(pScrn->scrnIndex, X_CONFIG,
@@ -371,8 +396,8 @@ FBDevProbe(DriverPtr drv, int flags)
 		    pScrn->ScreenInit    = FBDevScreenInit;
 		    pScrn->SwitchMode    = cubie_fbdevHWSwitchMode;
 		    pScrn->AdjustFrame   = fbdevHWAdjustFrameWeak();
-		    pScrn->EnterVT       = fbdevHWEnterVTWeak();
-		    pScrn->LeaveVT       = fbdevHWLeaveVTWeak();
+		    pScrn->EnterVT       = cubie_fbdevHWEnterVT;
+		    pScrn->LeaveVT       = cubie_fbdevHWLeaveVT;
 		    pScrn->ValidMode     = fbdevHWValidModeWeak();
 		    
 		    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
@@ -530,14 +555,11 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
     }
 	/* select video modes */
 	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against framebuffer device...\n");
-	fbdevHWSetVideoModes(pScrn);
-	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against monitor...\n");
-	{
+	if(0){
 		DisplayModePtr mode, first = mode = pScrn->modes;
 		
 		if (mode != NULL) do {
 			mode->status = xf86CheckModeForMonitor(mode, pScrn->monitor);
-		
 			mode = mode->next;
 		} while (mode != NULL && mode != first);
 
@@ -554,6 +576,9 @@ FBDevPreInit(ScrnInfoPtr pScrn, int flags)
 
 	/* First approximation, may be refined in ScreenInit */
 	pScrn->displayWidth = pScrn->virtualX;
+	xf86DrvMsg(0, X_INFO, "Mode %i x %i fbdevHWSetVideoModes\n", pScrn->modes->HDisplay, 		pScrn->modes->VDisplay );
+	fbdevHWSetVideoModes(pScrn);
+	xf86DrvMsg(pScrn->scrnIndex, X_INFO, "checking modes against monitor...\n");
 
 	xf86PrintModes(pScrn);
 
@@ -671,21 +696,42 @@ static void
 CubieHandleUEvents(int fd, void *closure)
 {
     ScrnInfoPtr scrn = closure;
-    intel_screen_private *intel = intel_get_screen_private(scrn);
+    FBDevPtr fPtr = FBDEVPTR(scrn);
     struct udev_device *dev;
     const char *hotplug;
     struct stat s;
     dev_t udev_devnum;
-
-    dev = udev_monitor_receive_device(intel->uevent_monitor);
+	xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
+    dev = udev_monitor_receive_device(fPtr->uevent_monitor);
     if (!dev)
         return;
 
-    udev_devnum = udev_device_get_devnum(dev);
-    if (fstat(intel->drmSubFD, &s)) {
-        udev_device_unref(dev);
-        return;
-    }
+	xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
+	udev_devnum = udev_device_get_devnum(dev);
+
+/*
+ *	FIX ME. I can get uevent informations here but I don`t know what
+ *	I will do then.
+ */
+
+	stat("/dev/hdmi",&s);
+	xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
+	hotplug = udev_device_get_property_value(dev, "ACTION");
+	if (!strcmp(hotplug,"offline")) {
+		fPtr->hotplug_flag = 0;
+		RRGetInfo(xf86ScrnToScreen(scrn), TRUE);
+	} else if (!strcmp(hotplug,"online")) {
+		fPtr->hotplug_flag = 1;
+		RRGetInfo(xf86ScrnToScreen(scrn), TRUE);
+	} else {
+			xf86DrvMsg(0, X_INFO, "omit event  %d\n",__LINE__);
+	}
+	xf86DrvMsg(0, X_INFO, "hotplug_flag %d  %d\n",fPtr->hotplug_flag,__LINE__);
+
+/*
+ * the follow code which is intel`s. It`s maybe only work well in drm system.
+ */
+#if 0
     /*
      * Check to make sure this event is directed at our
      * device (by comparing dev_t values), then make
@@ -697,20 +743,36 @@ CubieHandleUEvents(int fd, void *closure)
     if (memcmp(&s.st_rdev, &udev_devnum, sizeof (dev_t)) == 0 &&
             hotplug && atoi(hotplug) == 1)
         RRGetInfo(xf86ScrnToScreen(scrn), TRUE);
+#endif
 
+#if 0 // my test code
+	if(fPtr->hotplug_flag){
+	if ( !xf86InitialConfiguration( scrn, FALSE ) )
+		xf86DrvMsg(0, X_INFO, "xf86InitialConfiguration err  %d\n",__LINE__);
+	if (NULL == scrn->modes)
+		fbdevHWUseBuildinMode(scrn);
+	if(scrn->currentMode != scrn->modes)
+		scrn->currentMode = scrn->modes;
+	if(fPtr->max_displayY && fPtr->max_displayX){
+                scrn->virtualX = fPtr->max_displayX;
+                scrn->virtualY = fPtr->max_displayY;
+	}
+	scrn->displayWidth = scrn->virtualX;
+
+	fbdevHWSetVideoModes(scrn);
+	}
+#endif
     udev_device_unref(dev);
 }
 
 static void
-I830UeventInit(ScrnInfoPtr pScrn)
+CubieUeventInit(ScrnInfoPtr pScrn)
 {
 	FBDevPtr fPtr = FBDEVPTR(pScrn);
     struct udev *u;
     struct udev_monitor *mon;
     MessageType from = X_CONFIG;
 	
-    xf86DrvMsg(scrn->scrnIndex, from, "hotplug detection: \"%s\"\n",
-            hotplug ? "enabled" : "disabled");
     
 	u = udev_new();
     if (!u)
@@ -734,7 +796,7 @@ I830UeventInit(ScrnInfoPtr pScrn)
     }
 
     fPtr->uevent_handler = xf86AddGeneralHandler(udev_monitor_get_fd(mon),
-                              I830HandleUEvents, scrn);
+                 CubieHandleUEvents, pScrn);
     if (!fPtr->uevent_handler) {
         udev_monitor_unref(mon);
         udev_unref(u);
@@ -990,6 +1052,7 @@ FBDevScreenInit(SCREEN_INIT_ARGS_DECL)
 	fPtr->CloseScreen = pScreen->CloseScreen;
 	pScreen->CloseScreen = FBDevCloseScreen;
 
+	CubieUeventInit(pScrn);
 #if XV
 	{
 	    XF86VideoAdaptorPtr *ptr;
@@ -1000,7 +1063,6 @@ FBDevScreenInit(SCREEN_INIT_ARGS_DECL)
 	    }
 	}
 #endif
-
 	TRACE_EXIT("FBDevScreenInit");
 
 	return TRUE;
@@ -1011,9 +1073,7 @@ FBDevCloseScreen(CLOSE_SCREEN_ARGS_DECL)
 {
 	ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
 	FBDevPtr fPtr = FBDEVPTR(pScrn);
-    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
-		"%s %s %d\n",__FILE__, __func__,__LINE__);
-	
+
 	fbdevHWRestore(pScrn);
 	fbdevHWUnmapVidmem(pScrn);
 	if (fPtr->shadow) {
@@ -1063,8 +1123,6 @@ FBDevPointerMoved(SCRN_ARG_TYPE arg, int x, int y)
     SCRN_INFO_PTR(arg);
     FBDevPtr fPtr = FBDEVPTR(pScrn);
     int newX, newY;
-    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
-		"%s %s %d\n",__FILE__, __func__,__LINE__);
 
     switch (fPtr->rotate)
     {
@@ -1259,7 +1317,6 @@ FBDevDriverFunc(ScrnInfoPtr pScrn, xorgDriverFuncOp op, pointer ptr)
 	    return FALSE;
     }
 }
-
 
 static Bool fbdev_crtc_config_resize( ScrnInfoPtr pScrn, int width, int height )
 {

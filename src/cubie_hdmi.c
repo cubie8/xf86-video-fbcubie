@@ -233,14 +233,8 @@ static int fbdev_hdmi_output_mode_valid(xf86OutputPtr output, DisplayModePtr pMo
     int i;
     IGNORE( output );
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-    for(i=0;i<10;i++){
-	if((cubie_resolution_support_list[i].HDisplay == pMode->HDisplay)
-	&& (cubie_resolution_support_list[i].VDisplay == pMode->VDisplay)){
-	return MODE_OK;
-	}
-    }
     xf86DrvMsg(0, X_INFO, "Mode %i x %i unvalid\n", pMode->HDisplay, pMode->VDisplay );
-    return -1;
+	return MODE_OK;
 }
 
 static Bool fbdev_hdmi_output_mode_fixup(xf86OutputPtr output, DisplayModePtr mode, DisplayModePtr adjusted_mode)
@@ -354,6 +348,29 @@ convert_to_video_timing(fb_videomodeptr timing)
     return mode;
 }
 
+
+void fb_videomode_to_var(struct fb_var_screeninfo *var,
+              fb_videomode *mode)
+{
+    var->xres = mode->xres;
+    var->yres = mode->yres;
+    var->xres_virtual = mode->xres;
+    var->yres_virtual = mode->yres;
+    var->xoffset = 0;
+    var->yoffset = 0;
+    var->pixclock = mode->pixclock;
+    var->left_margin = mode->left_margin;
+    var->right_margin = mode->right_margin;
+    var->upper_margin = mode->upper_margin;
+    var->lower_margin = mode->lower_margin;
+    var->hsync_len = mode->hsync_len;
+    var->vsync_len = mode->vsync_len;
+    var->sync = mode->sync;
+    var->vmode = mode->vmode & FB_VMODE_MASK;
+}
+
+
+int global_first = 0;
 static void          
 fbdev2xfree_timing(struct fb_var_screeninfo *var, DisplayModePtr mode)                                                                      
 {
@@ -387,28 +404,44 @@ fbdev2xfree_timing(struct fb_var_screeninfo *var, DisplayModePtr mode)
     mode->CrtcVTotal = mode->VTotal;
     mode->CrtcHAdjusted = FALSE;
     mode->CrtcVAdjusted = FALSE;                                                                                                            
+
+	mode->type		= M_T_DRIVER;
+
+    xf86SetModeDefaultName(mode);
 }
+
+
+
 static DisplayModePtr
 fb2mode(fb_videomodeptr fb_videomode, int size)
 {
-	DisplayModePtr displaymode = NULL , Mode = NULL;
+	DisplayModePtr displaymode = NULL , Modes = NULL;
+	int i;
+	struct fb_var_screeninfo fb_var_mode;
 
     for (i = 0; i < size; i++,fb_videomode++) {
-        DisplayModePtr Mode;
+		DisplayModePtr Mode;
+		memset(&fb_var_mode,0,sizeof(fb_var_mode));
+		Mode = calloc(1, sizeof(DisplayModeRec));
 
-        Mode = calloc(1, sizeof(DisplayModeRec));
-        if (Mode) {
-			fbdev2xfree_timing(fb_videomode , Mode);
+		if (Mode) {
+			fb_videomode_to_var(&fb_var_mode,fb_videomode);
+			fbdev2xfree_timing(&fb_var_mode, Mode);
 			Modes = xf86ModesAdd(Modes, Mode);
-        }
-		if(!displaymode)
-			displaymode = Modes;
+			if (i == (size - 1))
+				Mode->type	|=  M_T_PREFERRED;
+		}
     }
+
+	displaymode = Modes;
+	xf86DrvMsg(0, X_INFO, "%s %dx%d\n",Modes->name, Modes->HDisplay, Modes->VDisplay);
+
 	return displaymode;
 }
 
 static char edid_array[1024];
 static char *edid_data = edid_array;
+static char fb_videomode_data[1024];
 static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 {
     DisplayModePtr mode_ptr;
@@ -416,10 +449,10 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
     ScrnInfoPtr pScrn = output->scrn;
     FBDevPtr fbdevptr = FBDEVPTR(pScrn);
 	int file,size,i;
-	void *private_data = xnfcalloc(1, 18 * sizeof(fb_videomode));
+	void *private_data = fb_videomode_data;
 	unsigned long arg[4];
 
-
+	global_first = 0;
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
 	file = open("/dev/disp",O_RDWR);
 	if(file < 0){
@@ -435,7 +468,7 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 		xf86DrvMsg(0, X_INFO, "%s %s DISP_CMD_HDMI_GET_EDID err!%d\n",__FILE__,__func__,__LINE__);
 	}
 
-	memset(private_data,0,1024);
+	memset(private_data,0,18 * sizeof(fb_videomode));
 	arg[0] = 1;
 	arg[1] =(unsigned long *) private_data;
 	size = ioctl(file,DISP_CMD_HDMI_GET_VIDEOMODE_LIST,arg);
@@ -445,7 +478,7 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
 	}
 
     xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-
+/*
     xf86MonPtr mon = NULL;
     mon = xf86InterpretEDID(pScrn->scrnIndex,edid_data);
     if(mon){
@@ -454,14 +487,18 @@ static DisplayModePtr fbdev_hdmi_output_get_modes(xf86OutputPtr output)
     }else{
 	xf86DrvMsg(0, X_INFO, "%s %s xf86InterpretEDID err %d\n",__FILE__,__func__,__LINE__);
     }
-
+	xf86DrvMsg(0, X_INFO, "%s %s size %d\n",__FILE__,__func__,__LINE__);
+*/
 	mode_ptr = fb2mode((fb_videomodeptr)private_data , size);
- /*
-    mode_ptr = xf86OutputGetEDIDModes(output);
+	/*
+	because aw edid analyse have err for some modes, I storage
+	the modes witch be supported by hardware in here
+	*/
+	fbdevptr->modes = fb2mode((fb_videomodeptr)private_data , size);
+
+//   mode_ptr = xf86OutputGetEDIDModes(output);
     Last     =  mode_ptr;
 while(Last){
-    xf86DrvMsg(0, X_INFO, "%s HD %d VD %d %d\n",
-	Last->name,Last->HDisplay,Last->VDisplay,__LINE__);
     xf86SetModeCrtc(Last,pScrn->adjustFlags);
 	if(fbdevptr->max_displayX < Last->HDisplay)
 		fbdevptr->max_displayX = Last->HDisplay;
@@ -471,20 +508,19 @@ while(Last){
 		pScrn->virtualX = Last->HDisplay;
 	if(pScrn->virtualY<Last->VDisplay)
 		pScrn->virtualY = Last->VDisplay;
-	xf86DrvMsg(0, X_INFO, "MAXX %d MAXY %d HD %d VD %d\n",fbdevptr->max_displayX,fbdevptr->max_displayY,Last->HDisplay,Last->VDisplay);
 
     if(Last->next)
 	Last = Last->next;
-     else
+     else{
 	break;
+	}
 
-    if(Last == mode_ptr)
+    if(Last == mode_ptr){
 	break;
+	}
 }
-*/
-	
-    xf86DrvMsg(0, X_INFO, "%s %s %d\n",__FILE__,__func__,__LINE__);
-return mode_ptr;
+
+	return mode_ptr;
  
 }
 
@@ -546,5 +582,6 @@ Bool FBDEV_hdmi_init(ScrnInfoPtr pScrn)
 
     return TRUE;
 }
+
 
 

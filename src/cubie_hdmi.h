@@ -41,8 +41,10 @@ typedef struct {
 	/*add by Wilhelm*/
 	int				max_displayX;
 	int				max_displayY;
+	int				hotplug_flag;
 	struct udev_monitor *uevent_monitor;
-	pointer			uevent_handler
+	pointer			uevent_handler;
+	DisplayModePtr		modes;
 } FBDevRec, *FBDevPtr;
 #define FBDEVPTR(p) ((FBDevPtr)((p)->driverPrivate))
 #endif
